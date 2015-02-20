@@ -40,6 +40,7 @@
 #include "catalog/pg_type.h"
 #include "catalog/objectaddress.h"
 #include "commands/extension.h"
+#include "commands/event_trigger.h"
 #include "executor/execdesc.h"
 #include "executor/executor.h"
 #include "executor/instrument.h"
@@ -137,7 +138,6 @@ static void PgShardProcessUtility(Node *parsetree, const char *queryString,
 								  ProcessUtilityContext context, ParamListInfo params,
 								  DestReceiver *dest, char *completionTag);
 
-
 /* declarations for dynamic loading */
 PG_MODULE_MAGIC;
 
@@ -149,6 +149,9 @@ static ExecutorRun_hook_type PreviousExecutorRunHook = NULL;
 static ExecutorFinish_hook_type PreviousExecutorFinishHook = NULL;
 static ExecutorEnd_hook_type PreviousExecutorEndHook = NULL;
 static ProcessUtility_hook_type PreviousProcessUtilityHook = NULL;
+
+
+PG_FUNCTION_INFO_V1(control_drop_statements);
 
 
 /*
@@ -2008,10 +2011,39 @@ PgShardProcessUtility(Node *parsetree, const char *queryString,
 			}
 		}
 	}
-	else if (statementType == T_DropStmt)
-	{
-		DropStmt   *dropStatement = (DropStmt *) parsetree;
 
+	if (PreviousProcessUtilityHook != NULL)
+	{
+		PreviousProcessUtilityHook(parsetree, queryString, context,
+								   params, dest, completionTag);
+	}
+	else
+	{
+		standard_ProcessUtility(parsetree, queryString, context,
+								params, dest, completionTag);
+	}
+}
+
+
+Datum
+control_drop_statements(PG_FUNCTION_ARGS)
+{
+
+	EventTriggerData *triggerData = NULL;
+	Node *parseTree = NULL;
+
+	/* error if event trigger manager did not call this function */
+	if (!CALLED_AS_EVENT_TRIGGER(fcinfo))
+	{
+		ereport(ERROR, (errmsg("trigger not fired by event trigger manager")));
+	}
+
+	triggerData = (EventTriggerData *) fcinfo->context;
+	parseTree = triggerData->parsetree;
+
+	if (nodeTag(parseTree) == T_DropStmt)
+	{
+		DropStmt   *dropStatement = (DropStmt *) parseTree;
 		/* only apply hook for tables and extension */
 		if (dropStatement->removeType == OBJECT_TABLE)
 		{
@@ -2064,7 +2096,7 @@ PgShardProcessUtility(Node *parsetree, const char *queryString,
 						{
 							ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 											errmsg("cannot drop %s because distributed"
-												   " table(s) exists", PG_SHARD_EXTENSION_NAME),
+												   " table(s) exists trigger", PG_SHARD_EXTENSION_NAME),
 											errhint("Try dropping the extension with"
 													    " CASCADE modifier.")));
 						}
@@ -2073,16 +2105,5 @@ PgShardProcessUtility(Node *parsetree, const char *queryString,
 			}
 		}
 	}
-
-	if (PreviousProcessUtilityHook != NULL)
-	{
-		PreviousProcessUtilityHook(parsetree, queryString, context,
-								   params, dest, completionTag);
-	}
-	else
-	{
-		standard_ProcessUtility(parsetree, queryString, context,
-								params, dest, completionTag);
-	}
+	PG_RETURN_NULL();
 }
-

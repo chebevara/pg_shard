@@ -140,3 +140,13 @@ $sync_table_metadata_to_citus$ LANGUAGE 'plpgsql';
 
 COMMENT ON FUNCTION sync_table_metadata_to_citus(text)
 		IS 'synchronize a distributed table''s pg_shard metadata to CitusDB';
+
+CREATE FUNCTION control_drop_statements()
+RETURNS event_trigger
+AS 'MODULE_PATHNAME'
+LANGUAGE C STRICT;
+
+CREATE EVENT TRIGGER control_drop_statements_trigger
+ON ddl_command_start
+EXECUTE PROCEDURE control_drop_statements();
+
